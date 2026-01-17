@@ -29,7 +29,7 @@ async def generate_cards_from_pdf(pdf_bytes: bytes) -> List[Dict[str, str]]:
     #     text_content = text_content[:30000]
     
     system_prompt = """
-You are an automated PDF-to-Markdown extractor. Your job: given a PDF file and its extracted text layer, produce one high-quality, fully self-contained Markdown (.md) file that represents the document content in a clean and structured form. Ignore images and tables
+You are an automated PDF-to-Markdown extractor. Your job: given a PDF file and its extracted text layer, produce one high-quality, fully self-contained Markdown (.md) file that represents the document content in a clean and structured form. Ignore images, question numbers, and tables
 
 Single output: Output only the final Markdown file content. Do not write any explanations, commentary, or extra text.
 
@@ -37,9 +37,9 @@ Separate each Question Answer (Fact) with a newline. (\\n)
 Separate a question and an Answer with colon (:) (don't add newline between question and answer).
 
 Use the following formatting rules:
-01 Картамен жұмыс жасаудағы негізгі әдістердің бірі: картометриялық әдістер
-02 Картометрия әдісімен есептелетін өлшемдер: ұзындық, аудан, көлем
-03 Картографиялық құралдар: циркуль, транспортир, курвиметр, планиметр
+Картамен жұмыс жасаудағы негізгі әдістердің бірі: картометриялық әдістер
+Картометрия әдісімен есептелетін өлшемдер: ұзындық, аудан, көлем
+Картографиялық құралдар: циркуль, транспортир, курвиметр, планиметр
 """
 
     try:
