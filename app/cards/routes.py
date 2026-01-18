@@ -13,6 +13,25 @@ from app.cards.services import generate_cards_from_pdf
 
 router = APIRouter(prefix="/cards", tags=["Cards"])
 
+# Constants
+MAX_FILE_SIZE_MB = 10
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+
+def escape_csv_field(text: str) -> str:
+    """Escape semicolons in text for CSV export."""
+    return text.replace(";", "\\;")
+
+
+def format_cards_for_export(cards: List[Card]) -> str:
+    """Format cards as semicolon-separated text."""
+    lines = []
+    for card in cards:
+        question = escape_csv_field(card.question)
+        answer = escape_csv_field(card.answer)
+        lines.append(f"{question};{answer}")
+    return "\n".join(lines)
+
 
 # ============== DECK ENDPOINTS ==============
 
@@ -22,12 +41,23 @@ async def get_decks(
     current_user: User = Depends(get_current_user)
 ):
     """Get all decks for the current user."""
-    decks = db.query(Deck).filter(Deck.user_id == current_user.id).order_by(Deck.created_at.desc()).all()
+    # Optimized query with card count subquery to avoid N+1
+    card_count_subq = (
+        db.query(Card.deck_id, sql_func.count(Card.id).label("card_count"))
+        .group_by(Card.deck_id)
+        .subquery()
+    )
     
-    # Add card count to each deck
+    decks_with_counts = (
+        db.query(Deck, sql_func.coalesce(card_count_subq.c.card_count, 0).label("card_count"))
+        .outerjoin(card_count_subq, Deck.id == card_count_subq.c.deck_id)
+        .filter(Deck.user_id == current_user.id)
+        .order_by(Deck.created_at.desc())
+        .all()
+    )
+    
     result = []
-    for deck in decks:
-        card_count = db.query(sql_func.count(Card.id)).filter(Card.deck_id == deck.id).scalar()
+    for deck, card_count in decks_with_counts:
         deck_dict = {
             "id": deck.id,
             "name": deck.name,
@@ -79,13 +109,7 @@ async def export_deck(
     if not cards:
         return PlainTextResponse(content="", media_type="text/plain")
     
-    lines = []
-    for card in cards:
-        question = card.question.replace(";", "\\;")
-        answer = card.answer.replace(";", "\\;")
-        lines.append(f"{question};{answer}")
-    
-    content = "\n".join(lines)
+    content = format_cards_for_export(cards)
     # Use URL encoding for non-ASCII characters in filename
     safe_name = quote(deck.name.replace(' ', '_'), safe='')
     filename = f"{safe_name}_cards.txt"
@@ -113,15 +137,20 @@ async def upload_pdf(
             detail="Only PDF files are allowed"
         )
     
-    
-    
     # Read PDF content
     pdf_bytes = await file.read()
     
+    # Validate file size
     if len(pdf_bytes) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Empty file uploaded"
+        )
+    
+    if len(pdf_bytes) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB"
         )
     
     # Create deck with PDF filename
@@ -131,7 +160,14 @@ async def upload_pdf(
     db.flush()  # Get deck ID without committing
     
     # Generate cards using Gemini
-    generated_cards = await generate_cards_from_pdf(pdf_bytes)
+    try:
+        generated_cards = await generate_cards_from_pdf(pdf_bytes)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Error processing PDF: {str(e)}"
+        )
     
     if not generated_cards:
         db.rollback()
@@ -248,16 +284,11 @@ async def export_cards(
     if not cards:
         return PlainTextResponse(content="", media_type="text/plain")
     
-    lines = []
-    for card in cards:
-        question = card.question.replace(";", "\\;")
-        answer = card.answer.replace(";", "\\;")
-        lines.append(f"{question};{answer}")
-    
-    content = "\n".join(lines)
+    content = format_cards_for_export(cards)
     
     return PlainTextResponse(
         content=content,
         media_type="text/plain",
         headers={"Content-Disposition": "attachment; filename=anki_cards.txt"}
     )
+

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import Optional, List
 
@@ -18,14 +18,13 @@ class CardUpdate(BaseModel):
 
 
 class CardResponse(CardBase):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     user_id: int
     deck_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
-    
-    class Config:
-        from_attributes = True
 
 
 class CardsExport(BaseModel):
@@ -43,13 +42,12 @@ class DeckCreate(DeckBase):
 
 
 class DeckResponse(DeckBase):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     user_id: int
     created_at: datetime
     card_count: int = 0
-    
-    class Config:
-        from_attributes = True
 
 
 class DeckWithCards(DeckResponse):

@@ -1,5 +1,5 @@
-import json
-from typing import List, Dict
+import logging
+from typing import List, Dict, Optional
 
 from google import genai
 from google.genai import types
@@ -8,12 +8,20 @@ from app.config import get_settings
 from app.pdf.extractor import extract_text_from_pdf
 from app.pdf.extractor import split_pdf_bytes_to_chunks
 
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
 
 # Configure Gemini
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-def query_to_llm(pdf_bytes, pdf_text: str) -> str:
+
+def query_to_llm(pdf_bytes: bytes, pdf_text: str) -> Optional[str]:
+    """
+    Query Gemini LLM to extract flashcards from PDF.
+    
+    Returns the response text or None on error.
+    """
     system_prompt = """
 You are an automated PDF-to-Markdown extractor. Your job: given a PDF file and its extracted text layer, produce one high-quality, fully self-contained Markdown (.md) file that represents the document content in a clean and structured form. Ignore images, question numbers, and tables
 
@@ -29,7 +37,7 @@ Use the following formatting rules:
 """
 
     try:
-        print("Querying Gemini LLM...")
+        logger.info("Querying Gemini LLM...")
         response = client.models.generate_content(
             model="gemini-3-flash-preview",
             config=types.GenerateContentConfig(system_instruction=system_prompt),
@@ -39,14 +47,13 @@ Use the following formatting rules:
                     mime_type='application/pdf',
                 ),
                 pdf_text
-                ]
-
-            )
-        print("Received response from Gemini LLM.")
-        return response
+            ]
+        )
+        logger.info("Received response from Gemini LLM.")
+        return response.text
     except Exception as e:
-        print(f"Error generating cards: {e}")
-        return []
+        logger.error(f"Error querying Gemini: {e}")
+        return None
 
 
 async def generate_cards_from_pdf(pdf_bytes: bytes) -> List[Dict[str, str]]:
@@ -56,42 +63,49 @@ async def generate_cards_from_pdf(pdf_bytes: bytes) -> List[Dict[str, str]]:
     """
     # Extract text from PDF
     text_content_list = extract_text_from_pdf(pdf_bytes, pages_per_chunk=10)
-    print(f"Extracted {len(text_content_list)} text chunks from PDF.")
+    logger.info(f"Extracted {len(text_content_list)} text chunks from PDF.")
+    
+    if not text_content_list:
+        return []
     
     if len(text_content_list) == 1:
-        print("Single chunk detected, querying LLM...")
-        response = query_to_llm(pdf_bytes, text_content_list[0]).text
+        logger.info("Single chunk detected, querying LLM...")
+        response = query_to_llm(pdf_bytes, text_content_list[0])
+        if response is None:
+            return []
         if response.startswith("```"):
             lines = response.split("\n")
             response = "\n".join(lines[1:-1])
-    elif len(text_content_list) > 1:
-        print("Multiple chunks detected, querying LLM for each chunk...")
+    else:
+        logger.info("Multiple chunks detected, querying LLM for each chunk...")
         chunk_bytes = split_pdf_bytes_to_chunks(pdf_bytes, pages_per_chunk=10)
         full_response = ""
-        for chunk_byte, chunk_text in zip(chunk_bytes,text_content_list, strict=True):
-            response = query_to_llm(chunk_byte, chunk_text).text
+        for chunk_byte, chunk_text in zip(chunk_bytes, text_content_list, strict=True):
+            chunk_response = query_to_llm(chunk_byte, chunk_text)
+            if chunk_response is None:
+                continue
+            
+            if chunk_response.startswith("```"):
+                lines = chunk_response.split("\n")
+                chunk_response = "\n".join(lines[1:-1])
 
-            if response.startswith("```"):
-                lines = response.split("\n")
-                response = "\n".join(lines[1:-1])
-
-            full_response += response + "\n"
+            full_response += chunk_response + "\n"
         response = full_response
-    else:
-        return []
-    
 
+    # Parse response into cards
     cards = []
     for line in response.split("\n"):
         idx = line.find(":")
         if idx != -1:
             question, answer = line[:idx], line[idx+1:]
-            cards.append({
-                "question": question.strip(),
-                "answer": answer.strip()
-            })
+            question = question.strip()
+            answer = answer.strip()
+            if question and answer:  # Skip empty entries
+                cards.append({
+                    "question": question,
+                    "answer": answer
+                })
 
-    
     # Validate structure
     validated_cards = []
     for card in cards:
@@ -102,5 +116,4 @@ async def generate_cards_from_pdf(pdf_bytes: bytes) -> List[Dict[str, str]]:
             })
     
     return validated_cards
-    
-    
+
