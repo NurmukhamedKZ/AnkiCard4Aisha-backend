@@ -113,6 +113,8 @@ async def upload_pdf(
             detail="Only PDF files are allowed"
         )
     
+    
+    
     # Read PDF content
     pdf_bytes = await file.read()
     
