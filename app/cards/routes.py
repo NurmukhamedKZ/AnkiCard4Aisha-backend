@@ -14,7 +14,7 @@ from app.cards.services import generate_cards_from_pdf
 router = APIRouter(prefix="/cards", tags=["Cards"])
 
 # Constants
-MAX_FILE_SIZE_MB = 10
+MAX_FILE_SIZE_MB = 100
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 
