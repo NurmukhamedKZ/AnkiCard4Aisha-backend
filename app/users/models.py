@@ -16,4 +16,5 @@ class User(Base):
     # Relationships
     cards = relationship("Card", back_populates="owner", cascade="all, delete-orphan")
     decks = relationship("Deck", back_populates="owner", cascade="all, delete-orphan")
+    folders = relationship("Folder", back_populates="owner", cascade="all, delete-orphan")
 

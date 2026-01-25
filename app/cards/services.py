@@ -32,8 +32,8 @@ Separate a question and an Answer with colon (:) (don't add newline between ques
 
 Use the following formatting rules:
 Картамен жұмыс жасаудағы негізгі әдістердің бірі: картометриялық әдістер
-Картометрия әдісімен есептелетін өлшемдер: ұзындық, аудан, көлем
-Картографиялық құралдар: циркуль, транспортир, курвиметр, планиметр
+Картометрия әдісімен есептелетін қандай өлшемдер бар?: ұзындық, аудан, көлем
+Қандай картографиялық құралдар бар?: циркуль, транспортир, курвиметр, планиметр
 """
 
     try:
@@ -56,11 +56,21 @@ Use the following formatting rules:
         return None
 
 
-async def generate_cards_from_pdf(pdf_bytes: bytes) -> List[Dict[str, str]]:
+
+async def generate_cards_from_pdf(pdf_bytes: bytes, selected_pages: Optional[List[int]] = None) -> List[Dict[str, str]]:
     """
     Extract text from PDF and generate Anki flashcards using Gemini.
     Returns a list of dictionaries with 'question' and 'answer' keys.
+    
+    Args:
+        pdf_bytes: The PDF file content
+        selected_pages: Optional list of 0-based page indices to process. If None, processes all.
     """
+    # Filter pages if selection is provided
+    if selected_pages is not None:
+        from app.pdf.extractor import filter_pdf_pages
+        pdf_bytes = filter_pdf_pages(pdf_bytes, selected_pages)
+
     # Extract text from PDF
     text_content_list = extract_text_from_pdf(pdf_bytes, pages_per_chunk=10)
     logger.info(f"Extracted {len(text_content_list)} text chunks from PDF.")

@@ -59,3 +59,46 @@ def split_pdf_bytes_to_chunks(pdf_bytes: bytes, pages_per_chunk: int = 1) -> Lis
 
     src_doc.close()
     return chunks
+
+
+def filter_pdf_pages(pdf_bytes: bytes, page_indices: List[int]) -> bytes:
+    """
+    Creates a new PDF containing only the specified pages.
+    
+    Args:
+        pdf_bytes: The original PDF bytes
+        page_indices: List of 0-based page indices to include
+        
+    Returns:
+        Bytes of the new filtered PDF
+    """
+    if not page_indices:
+        return pdf_bytes
+        
+    src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    new_doc = fitz.open()
+    
+    # Sort indices to maintain order and remove duplicates
+    sorted_indices = sorted(list(set(page_indices)))
+    
+    # Validate indices
+    valid_indices = [i for i in sorted_indices if 0 <= i < src_doc.page_count]
+    
+    if not valid_indices:
+        src_doc.close()
+        new_doc.close()
+        return pdf_bytes
+        
+    # Select specific pages into the new document
+    # insert_pdf allows copying pages from source to destination
+    # We can iterate and copy one by one, or if we want to copy a set of disparate pages:
+    # We can use new_doc.insert_pdf(src_doc, from_page=i, to_page=i) for each i in valid_indices.
+    for i in valid_indices:
+        new_doc.insert_pdf(src_doc, from_page=i, to_page=i)
+    
+    result_bytes = new_doc.tobytes()
+    
+    src_doc.close()
+    new_doc.close()
+    
+    return result_bytes
