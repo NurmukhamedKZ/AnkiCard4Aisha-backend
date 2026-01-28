@@ -1,3 +1,6 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,17 +14,32 @@ from app.users.models import User
 from app.cards.models import Card
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events."""
+    # Startup: Create database tables
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Failed to create database tables: {e}")
+        # Don't crash the app - let it start and handle errors per-request
+    yield
+    # Shutdown: cleanup if needed
+    logger.info("Application shutting down")
+
 
 app = FastAPI(
     title="Anki Card Generator API",
     description="Generate Anki flashcards from PDF files using AI",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
-# CORS middleware
+# CORS middleware - must be first to handle OPTIONS requests quickly
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_URL, "http://localhost:5173", "http://localhost:3000"],
