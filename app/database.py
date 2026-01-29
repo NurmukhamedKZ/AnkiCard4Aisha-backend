@@ -18,6 +18,7 @@ engine = create_engine(
     pool_size=5,
     max_overflow=10,
     pool_timeout=30,  # Timeout when getting connection from pool (seconds)
+    pool_recycle=300,  # Recycle connections after 5 minutes to prevent stale connections
     connect_args={
         "connect_timeout": "10",  # Connection timeout for psycopg3 (string value in seconds)
     }

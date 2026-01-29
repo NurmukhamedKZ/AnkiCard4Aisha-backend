@@ -1,5 +1,7 @@
 import logging
+import asyncio
 from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 from google import genai
 from google.genai import types
@@ -12,17 +14,17 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-# Configure Gemini
-client = genai.Client(api_key=settings.GEMINI_API_KEY)
+# Configure Gemini with HTTP timeout
+client = genai.Client(
+    api_key=settings.GEMINI_API_KEY,
+    http_options={"timeout": 120}  # 2 minute timeout for API calls
+)
+
+# Thread pool for running sync Gemini calls
+_executor = ThreadPoolExecutor(max_workers=4)
 
 
-def query_to_llm(pdf_bytes: bytes, pdf_text: str) -> Optional[str]:
-    """
-    Query Gemini LLM to extract flashcards from PDF.
-    
-    Returns the response text or None on error.
-    """
-    system_prompt = """
+SYSTEM_PROMPT = """
 You are an automated PDF-to-Markdown extractor. Your job: given a PDF file and its extracted text layer, produce one high-quality, fully self-contained Markdown (.md) file that represents the document content in a clean and structured form. Ignore images, question numbers, and tables
 
 Single output: Output only the final Markdown file content. Do not write any explanations, commentary, or extra text.
@@ -36,11 +38,16 @@ Use the following formatting rules:
 Қандай картографиялық құралдар бар?: циркуль, транспортир, курвиметр, планиметр
 """
 
+
+def _query_to_llm_sync(pdf_bytes: bytes, pdf_text: str) -> Optional[str]:
+    """
+    Synchronous Gemini LLM query (runs in thread pool).
+    """
     try:
         logger.info("Querying Gemini LLM...")
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            config=types.GenerateContentConfig(system_instruction=system_prompt),
+            model="gemini-2.0-flash",
+            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
             contents=[
                 types.Part.from_bytes(
                     data=pdf_bytes,
@@ -53,6 +60,28 @@ Use the following formatting rules:
         return response.text
     except Exception as e:
         logger.error(f"Error querying Gemini: {e}")
+        return None
+
+
+async def query_to_llm(pdf_bytes: bytes, pdf_text: str, timeout: float = 180.0) -> Optional[str]:
+    """
+    Query Gemini LLM to extract flashcards from PDF.
+    
+    Runs in thread pool with timeout to prevent hanging.
+    Returns the response text or None on error/timeout.
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(_executor, _query_to_llm_sync, pdf_bytes, pdf_text),
+            timeout=timeout
+        )
+        return result
+    except asyncio.TimeoutError:
+        logger.error(f"Gemini LLM query timed out after {timeout} seconds")
+        return None
+    except Exception as e:
+        logger.error(f"Error in async query_to_llm: {e}")
         return None
 
 
@@ -80,7 +109,7 @@ async def generate_cards_from_pdf(pdf_bytes: bytes, selected_pages: Optional[Lis
     
     if len(text_content_list) == 1:
         logger.info("Single chunk detected, querying LLM...")
-        response = query_to_llm(pdf_bytes, text_content_list[0])
+        response = await query_to_llm(pdf_bytes, text_content_list[0])
         if response is None:
             return []
         if response.startswith("```"):
@@ -91,7 +120,7 @@ async def generate_cards_from_pdf(pdf_bytes: bytes, selected_pages: Optional[Lis
         chunk_bytes = split_pdf_bytes_to_chunks(pdf_bytes, pages_per_chunk=10)
         full_response = ""
         for chunk_byte, chunk_text in zip(chunk_bytes, text_content_list, strict=True):
-            chunk_response = query_to_llm(chunk_byte, chunk_text)
+            chunk_response = await query_to_llm(chunk_byte, chunk_text)
             if chunk_response is None:
                 continue
             

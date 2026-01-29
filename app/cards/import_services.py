@@ -6,7 +6,9 @@ import logging
 import io
 import zipfile
 import sqlite3
+import asyncio
 from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 from google import genai
 from google.genai import types
@@ -16,8 +18,14 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Configure Gemini
-client = genai.Client(api_key=settings.GEMINI_API_KEY)
+# Configure Gemini with HTTP timeout
+client = genai.Client(
+    api_key=settings.GEMINI_API_KEY,
+    http_options={"timeout": 120}  # 2 minute timeout for API calls
+)
+
+# Thread pool for running sync Gemini calls
+_executor = ThreadPoolExecutor(max_workers=4)
 
 
 def parse_csv_cards(cards_data: List[Dict[str, str]]) -> List[Dict[str, str]]:
@@ -39,20 +47,7 @@ def parse_csv_cards(cards_data: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return parsed_cards
 
 
-async def generate_cards_from_text(text: str) -> List[Dict[str, str]]:
-    """
-    Generate flashcards from plain text using Gemini AI.
-    
-    Args:
-        text: Plain text content to generate cards from
-        
-    Returns:
-        List of card dictionaries with 'question' and 'answer' keys
-    """
-    if not text.strip():
-        return []
-    
-    system_prompt = """
+TEXT_GENERATION_PROMPT = """
 You are a flashcard generator. Given text content, create high-quality question-answer flashcards.
 
 Rules:
@@ -68,20 +63,53 @@ What is the capital of France?:Paris
 Who wrote Romeo and Juliet?:William Shakespeare
 What is photosynthesis?:The process by which plants convert light energy into chemical energy
 """
-    
+
+
+def _generate_cards_from_text_sync(text: str) -> Optional[str]:
+    """
+    Synchronous Gemini call for text generation (runs in thread pool).
+    """
     try:
         logger.info("Generating cards from text using Gemini...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
-            config=types.GenerateContentConfig(system_instruction=system_prompt),
+            model="gemini-2.0-flash",
+            config=types.GenerateContentConfig(system_instruction=TEXT_GENERATION_PROMPT),
             contents=text
         )
         
         if not response or not response.text:
             logger.warning("No response from Gemini")
-            return []
+            return None
         
-        response_text = response.text
+        return response.text
+    except Exception as e:
+        logger.error(f"Error in Gemini call: {e}")
+        return None
+
+
+async def generate_cards_from_text(text: str, timeout: float = 180.0) -> List[Dict[str, str]]:
+    """
+    Generate flashcards from plain text using Gemini AI.
+    
+    Args:
+        text: Plain text content to generate cards from
+        timeout: Maximum time to wait for Gemini response (default 180 seconds)
+        
+    Returns:
+        List of card dictionaries with 'question' and 'answer' keys
+    """
+    if not text.strip():
+        return []
+    
+    try:
+        loop = asyncio.get_event_loop()
+        response_text = await asyncio.wait_for(
+            loop.run_in_executor(_executor, _generate_cards_from_text_sync, text),
+            timeout=timeout
+        )
+        
+        if not response_text:
+            return []
         
         # Remove markdown code blocks if present
         if response_text.startswith("```"):
@@ -105,6 +133,9 @@ What is photosynthesis?:The process by which plants convert light energy into ch
         logger.info(f"Generated {len(cards)} cards from text")
         return cards
         
+    except asyncio.TimeoutError:
+        logger.error(f"Gemini text generation timed out after {timeout} seconds")
+        raise Exception("AI generation timed out. Please try again with less content.")
     except Exception as e:
         logger.error(f"Error generating cards from text: {e}")
         raise
