@@ -18,11 +18,8 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Configure Gemini with HTTP timeout
-client = genai.Client(
-    api_key=settings.GEMINI_API_KEY,
-    http_options={"timeout": 120}  # 2 minute timeout for API calls
-)
+# Configure Gemini
+client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 # Thread pool for running sync Gemini calls
 _executor = ThreadPoolExecutor(max_workers=4)
