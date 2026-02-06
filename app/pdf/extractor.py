@@ -14,6 +14,7 @@ def extract_text_from_pdf(pdf_bytes: bytes, pages_per_chunk: int = 1) -> List[st
     Returns:
         List of text strings, one per chunk
     """
+    pages_per_chunk = 1
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     total_pages = doc.page_count
     result_list = []
